@@ -1,0 +1,16 @@
+[package]
+name = "agent-slint"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+slint = "1.8"
+agent-sdk-rust = { git = "https://github.com/easy-utils/agent-sdk-rust.git", tag = "v0.17.0" }
+easy-rpc = { git = "https://github.com/easy-utils/easy-rpc-rust.git", tag = "v3.0.0", default-features = false, features = ["h1h2"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+bytes = "1"
+prost = "0.13"
+serde_json = "1"
+
+[build-dependencies]
+slint-build = "1.8"

@@ -1,0 +1,128 @@
+// Easy Agent — Slint UI.
+//
+// Mirrors the Flutter client: a connection form (base URL + token), a session
+// list, and a chat screen with a streamed transcript + composer. All state is
+// driven from Rust; this file is pure presentation.
+
+import { VerticalBox, HorizontalBox, ScrollView, Button, LineEdit, ListView } from "std-widgets.slint";
+
+export component AppWindow inherits Window {
+    title: "Easy Agent";
+    preferred-width: 480px;
+    preferred-height: 820px;
+    background: #0d1117;
+
+    in property <bool> connected: false;
+    in-out property <string> base-url: "https://standalone-agent.temp.10.199.64.20.nip.io";
+    in-out property <string> token: "";
+    in property <string> status: "";
+
+    // session list
+    in property <[string]> sessions: [];
+    in-out property <int> selected-session: -1;
+
+    // chat
+    in property <string> chat-title: "";
+    in property <[string]> transcript: [];
+    in-out property <string> composer: "";
+
+    callback connect-clicked();
+    callback new-session();
+    callback refresh-clicked();
+    callback session-picked(int);
+    callback send-clicked();
+    callback back-clicked();
+
+    VerticalBox {
+        // ---- header ----
+        Rectangle {
+            height: 48px;
+            background: #161b22;
+            Text {
+                text: root.chat-title == "" ? "Easy Agent" : root.chat-title;
+                color: #e6edf3;
+                font-size: 16px;
+                font-weight: 700;
+                vertical-alignment: center;
+                x: 12px;
+            }
+        }
+
+        if !root.connected : VerticalBox {
+            spacing: 10px;
+            padding: 16px;
+            Text { text: "Gateway URL"; color: #8b98a9; }
+            LineEdit { text <=> root.base-url; }
+            Text { text: "Token"; color: #8b98a9; }
+            LineEdit { text <=> root.token; }
+            Button { text: "Connect"; clicked => { root.connect-clicked(); } }
+            Text { text: root.status; color: #d97706; wrap: word-wrap; }
+        }
+
+        if root.connected && root.chat-title == "" : VerticalBox {
+            HorizontalBox {
+                height: 40px;
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 6px;
+                Text { text: "Sessions (" + root.sessions.length + ")"; color: #e6edf3; vertical-alignment: center; horizontal-stretch: 1; }
+                Button { text: "New"; clicked => { root.new-session(); } }
+                Button { text: "Refresh"; clicked => { root.refresh-clicked(); } }
+            }
+            ListView {
+                vertical-stretch: 1;
+                for name[i] in root.sessions : Rectangle {
+                    height: 44px;
+                    background: i == root.selected-session ? #21262d : transparent;
+                    Text {
+                        x: 12px;
+                        vertical-alignment: center;
+                        text: name;
+                        color: #e6edf3;
+                    }
+                    TouchArea {
+                        clicked => {
+                            root.selected-session = i;
+                            root.session-picked(i);
+                        }
+                    }
+                }
+            }
+            Text { text: root.status; color: #8b98a9; wrap: word-wrap; }
+        }
+
+        if root.connected && root.chat-title != "" : VerticalBox {
+            ScrollView {
+                vertical-stretch: 1;
+                VerticalBox {
+                    padding: 12px;
+                    spacing: 10px;
+                    for msg in root.transcript : Rectangle {
+                        background: #161b22;
+                        border-radius: 8px;
+                        height: t.preferred-height + 16px;
+                        t := Text {
+                            x: 8px;
+                            y: 8px;
+                            width: parent.width - 16px;
+                            text: msg;
+                            color: #e6edf3;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+            HorizontalBox {
+                padding: 8px;
+                spacing: 6px;
+                Button { text: "Back"; clicked => { root.back-clicked(); } }
+                LineEdit {
+                    horizontal-stretch: 1;
+                    text <=> root.composer;
+                    accepted => { root.send-clicked(); }
+                }
+                Button { text: "Send"; clicked => { root.send-clicked(); } }
+            }
+        }
+    }
+}
