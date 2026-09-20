@@ -1,6 +1,10 @@
 // Thin RPC facade over the generated agent-sdk-rust messages + easy-rpc
 // transport. Mirrors the JS/Python/Go clients: same POST paths, same
 // application/connect+proto framing, same streamed Prompt events.
+//
+// Some methods are part of the shared client contract but not yet wired to a
+// view; keep them (the guard checks the surface, not the call graph).
+#![allow(dead_code)]
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -171,4 +175,150 @@ where
         Some(e) => Err(e.to_string()),
         None => Ok(()),
     }
+}
+
+/// The caller's resolved identity (tenant id/name + role), from the token.
+pub async fn identity(base: &str, token: &str) -> Result<pb::GetIdentityResponse, String> {
+    let (_b, t, h) = transport(base, token);
+    let r = t
+        .send(req(base, &h, "/agent.v1.AgentService/GetIdentity", pb::GetIdentityRequest {}.encode_to_vec()))
+        .await
+        .map_err(map_err)?;
+    if r.status >= 300 {
+        return Err(format!("get_identity: HTTP {}", r.status));
+    }
+    pb::GetIdentityResponse::decode(&r.body[..]).map_err(|e| e.to_string())
+}
+
+/// Best-effort display name for the saved-backend list.
+pub async fn resolve_username(base: &str, token: &str) -> String {
+    match identity(base, token).await {
+        Ok(r) if !r.tenant_name.is_empty() => r.tenant_name,
+        Ok(r) => r.tenant,
+        Err(_) => String::new(),
+    }
+}
+
+/// Only model/preset/locale/variant are client-editable (proto v0.18).
+pub async fn update_settings(
+    base: &str,
+    token: &str,
+    id: &str,
+    model: &str,
+    preset: &str,
+    locale: &str,
+    variant: &str,
+) -> Result<(), String> {
+    let (_b, t, h) = transport(base, token);
+    let body = pb::UpdateSettingsRequest {
+        id: id.to_string(),
+        model: model.to_string(),
+        preset: preset.to_string(),
+        locale: locale.to_string(),
+        variant: variant.to_string(),
+    }
+    .encode_to_vec();
+    let r = t
+        .send(req(base, &h, "/agent.v1.AgentService/UpdateSettings", body))
+        .await
+        .map_err(map_err)?;
+    if r.status >= 300 {
+        return Err(format!("update_settings: HTTP {}", r.status));
+    }
+    Ok(())
+}
+
+pub async fn list_presets(base: &str, token: &str, locale: &str) -> Result<Vec<String>, String> {
+    let (_b, t, h) = transport(base, token);
+    let body = pb::ListPresetsRequest { locale: locale.to_string() }.encode_to_vec();
+    let r = t
+        .send(req(base, &h, "/agent.v1.AgentService/ListPresets", body))
+        .await
+        .map_err(map_err)?;
+    if r.status >= 300 {
+        return Err(format!("list_presets: HTTP {}", r.status));
+    }
+    let out = pb::ListPresetsResponse::decode(&r.body[..]).map_err(|e| e.to_string())?;
+    Ok(out.presets.iter().map(|p| p.id.clone()).collect())
+}
+
+pub async fn list_providers(base: &str, token: &str) -> Result<Vec<String>, String> {
+    let (_b, t, h) = transport(base, token);
+    let body = pb::ListProvidersRequest {}.encode_to_vec();
+    let r = t
+        .send(req(base, &h, "/agent.v1.AgentService/ListProviders", body))
+        .await
+        .map_err(map_err)?;
+    if r.status >= 300 {
+        return Err(format!("list_providers: HTTP {}", r.status));
+    }
+    let out = pb::ListProvidersResponse::decode(&r.body[..]).map_err(|e| e.to_string())?;
+    Ok(out
+        .providers
+        .iter()
+        .map(|p| format!("{} · {}", p.provider_id, p.capability))
+        .collect())
+}
+
+pub async fn list_tools(base: &str, token: &str, locale: &str) -> Result<Vec<String>, String> {
+    let (_b, t, h) = transport(base, token);
+    let body = pb::ListToolsRequest { locale: locale.to_string() }.encode_to_vec();
+    let r = t
+        .send(req(base, &h, "/agent.v1.AgentService/ListTools", body))
+        .await
+        .map_err(map_err)?;
+    if r.status >= 300 {
+        return Err(format!("list_tools: HTTP {}", r.status));
+    }
+    let out = pb::ListToolsResponse::decode(&r.body[..]).map_err(|e| e.to_string())?;
+    Ok(out.tools.iter().map(|t| t.name.clone()).collect())
+}
+
+pub async fn get_config(base: &str, token: &str, key: &str) -> Result<String, String> {
+    let (_b, t, h) = transport(base, token);
+    let body = pb::GetConfigRequest { key: key.to_string() }.encode_to_vec();
+    let r = t
+        .send(req(base, &h, "/agent.v1.AgentService/GetConfig", body))
+        .await
+        .map_err(map_err)?;
+    if r.status >= 300 {
+        return Err(format!("get_config: HTTP {}", r.status));
+    }
+    let out = pb::GetConfigResponse::decode(&r.body[..]).map_err(|e| e.to_string())?;
+    Ok(out.value)
+}
+
+pub async fn set_config(base: &str, token: &str, key: &str, value: &str) -> Result<(), String> {
+    let (_b, t, h) = transport(base, token);
+    let body = pb::SetConfigRequest {
+        key: key.to_string(),
+        value: value.to_string(),
+    }
+    .encode_to_vec();
+    let r = t
+        .send(req(base, &h, "/agent.v1.AgentService/SetConfig", body))
+        .await
+        .map_err(map_err)?;
+    if r.status >= 300 {
+        return Err(format!("set_config: HTTP {}", r.status));
+    }
+    Ok(())
+}
+
+pub async fn mailbox(base: &str, token: &str, id: &str) -> Result<Vec<String>, String> {
+    let (_b, t, h) = transport(base, token);
+    let body = pb::MailboxRequest { id: id.to_string() }.encode_to_vec();
+    let r = t
+        .send(req(base, &h, "/agent.v1.AgentService/Mailbox", body))
+        .await
+        .map_err(map_err)?;
+    if r.status >= 300 {
+        return Err(format!("mailbox: HTTP {}", r.status));
+    }
+    let out = pb::MailboxResponse::decode(&r.body[..]).map_err(|e| e.to_string())?;
+    Ok(out
+        .mailbox
+        .iter()
+        .map(|m| format!("{} · {}", m.msg_type, m.status))
+        .collect())
 }

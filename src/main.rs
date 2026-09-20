@@ -5,18 +5,41 @@
 // tokio runtime and results are marshalled back with `invoke_from_event_loop`.
 
 mod agent;
+mod navigation;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use slint::{Model, ModelRc, SharedString, VecModel};
+
+use navigation::NavStore;
 
 slint::include_modules!();
 
 type Rt = Arc<tokio::runtime::Runtime>;
 
+/// Mirror the nav store's tab + top page onto the Slint properties.
+fn sync_nav(ui: &AppWindow, nav: &NavStore) {
+    ui.set_tab(nav.tab.clone().into());
+    ui.set_page(nav.top().into());
+    ui.set_chat_title(if nav.top() == "chat_session" {
+        nav.active_session_id.clone().into()
+    } else {
+        "".into()
+    });
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     let rt: Rt = Arc::new(tokio::runtime::Runtime::new().expect("tokio runtime"));
+    let nav: Arc<Mutex<NavStore>> = Arc::new(Mutex::new(NavStore::new()));
+    // Seed the config list from the shared contract constant.
+    ui.set_config_items(ModelRc::new(VecModel::from(
+        navigation::CONFIG_SUB_IDS
+            .iter()
+            .map(|s| SharedString::from(*s))
+            .collect::<Vec<_>>(),
+    )));
+    let _ = (navigation::SIDER_TABS, navigation::SESSION_OVERLAYS, navigation::view_for);
 
     // ---- connect ----
     {
@@ -30,6 +53,9 @@ fn main() -> Result<(), slint::PlatformError> {
             let ui_weak = ui.as_weak();
             rt.spawn(async move {
                 let result = agent::connect(&base, &token).await;
+                if result.is_ok() {
+                    let _ = agent::resolve_username(&base, &token).await;
+                }
                 let sessions = if result.is_ok() {
                     agent::list_sessions(&base, &token).await.ok()
                 } else {
@@ -119,6 +145,7 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let ui_weak = ui.as_weak();
         let rt = rt.clone();
+        let nav = nav.clone();
         ui.on_session_picked(move |idx| {
             let ui = ui_weak.unwrap();
             let base = ui.get_base_url().to_string();
@@ -127,6 +154,9 @@ fn main() -> Result<(), slint::PlatformError> {
                 Some(s) => s.to_string(),
                 None => return,
             };
+            nav.lock().unwrap().active_session_id = id.clone();
+            nav.lock().unwrap().push("chat_session");
+            sync_nav(&ui, &nav.lock().unwrap());
             let ui_weak = ui.as_weak();
             rt.spawn(async move {
                 if let Ok(history) = agent::list_messages(&base, &token, &id, 50).await {
@@ -201,11 +231,114 @@ fn main() -> Result<(), slint::PlatformError> {
     // ---- back ----
     {
         let ui_weak = ui.as_weak();
+        let nav = nav.clone();
         ui.on_back_clicked(move || {
             if let Some(ui) = ui_weak.upgrade() {
-                ui.set_chat_title("".into());
+                nav.lock().unwrap().pop();
+                sync_nav(&ui, &nav.lock().unwrap());
                 ui.set_transcript(ModelRc::new(VecModel::from(Vec::<SharedString>::new())));
             }
+        });
+    }
+
+    // ---- tab switch ----
+    {
+        let ui_weak = ui.as_weak();
+        let nav = nav.clone();
+        ui.on_tab_clicked(move |tab| {
+            if let Some(ui) = ui_weak.upgrade() {
+                nav.lock().unwrap().tab = tab.to_string();
+                sync_nav(&ui, &nav.lock().unwrap());
+            }
+        });
+    }
+
+    // ---- config sub-item ----
+    {
+        let ui_weak = ui.as_weak();
+        let nav = nav.clone();
+        let rt = rt.clone();
+        ui.on_config_item_clicked(move |item| {
+            let ui = match ui_weak.upgrade() {
+                Some(u) => u,
+                None => return,
+            };
+            let item = item.to_string();
+            if item == "presets" {
+                nav.lock().unwrap().push("preset_form_new");
+                sync_nav(&ui, &nav.lock().unwrap());
+                let (base, token) = (ui.get_base_url().to_string(), ui.get_token().to_string());
+                let ui_weak = ui.as_weak();
+                rt.spawn(async move {
+                    let _ = agent::list_presets(&base, &token, "").await;
+                    let _ = slint::invoke_from_event_loop(move || {
+                        let _ = ui_weak.upgrade();
+                    });
+                });
+            } else {
+                nav.lock().unwrap().push(&format!("config_sub_{item}"));
+                sync_nav(&ui, &nav.lock().unwrap());
+            }
+        });
+    }
+
+    // ---- providers ----
+    {
+        let ui_weak = ui.as_weak();
+        let nav = nav.clone();
+        let rt = rt.clone();
+        ui.on_providers_clicked(move || {
+            let ui = match ui_weak.upgrade() {
+                Some(u) => u,
+                None => return,
+            };
+            nav.lock().unwrap().push("providers_list");
+            sync_nav(&ui, &nav.lock().unwrap());
+            let (base, token) = (ui.get_base_url().to_string(), ui.get_token().to_string());
+            let ui_weak = ui.as_weak();
+            rt.spawn(async move {
+                if let Ok(rows) = agent::list_providers(&base, &token).await {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_weak.upgrade() {
+                            ui.set_providers(ModelRc::new(VecModel::from(
+                                rows.into_iter().map(SharedString::from).collect::<Vec<_>>(),
+                            )));
+                        }
+                    });
+                }
+            });
+        });
+    }
+
+    // ---- mailbox overlay ----
+    {
+        let ui_weak = ui.as_weak();
+        let nav = nav.clone();
+        let rt = rt.clone();
+        ui.on_mailbox_clicked(move || {
+            let ui = match ui_weak.upgrade() {
+                Some(u) => u,
+                None => return,
+            };
+            nav.lock().unwrap().push("chat_overlay");
+            sync_nav(&ui, &nav.lock().unwrap());
+            let (base, token, sid) = (
+                ui.get_base_url().to_string(),
+                ui.get_token().to_string(),
+                nav.lock().unwrap().active_session_id.clone(),
+            );
+            let ui_weak = ui.as_weak();
+            rt.spawn(async move {
+                if let Ok(rows) = agent::mailbox(&base, &token, &sid).await {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_weak.upgrade() {
+                            ui.set_mailbox(ModelRc::new(VecModel::from(
+                                rows.into_iter().map(SharedString::from).collect::<Vec<_>>(),
+                            )));
+                        }
+                    });
+                }
+            });
         });
     }
 

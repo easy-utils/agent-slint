@@ -134,8 +134,8 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agent-sdk-rust"
-version = "0.17.0"
-source = "git+https://github.com/easy-utils/agent-sdk-rust.git?tag=v0.17.0#d1dfecad2f7d6a7fd60ef80bebf849c769c23f1a"
+version = "0.18.0"
+source = "git+https://github.com/easy-utils/agent-sdk-rust.git?tag=v0.18.0#f3f43ef7a03da9f632cc91b31f5c66743afa46d4"
 dependencies = [
  "async-trait",
  "bytes",

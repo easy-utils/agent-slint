@@ -26,12 +26,25 @@ export component AppWindow inherits Window {
     in property <[string]> transcript: [];
     in-out property <string> composer: "";
 
+    // navigation: the active tab and the top page key (see src/navigation.rs)
+    in-out property <string> tab: "chat";
+    in property <string> page: "chat_list";
+
+    // config / providers / mailbox page data
+    in property <[string]> config-items: ["appearance", "backends", "presets", "tools"];
+    in property <[string]> providers: [];
+    in property <[string]> mailbox: [];
+
     callback connect-clicked();
     callback new-session();
     callback refresh-clicked();
     callback session-picked(int);
     callback send-clicked();
     callback back-clicked();
+    callback tab-clicked(string);
+    callback config-item-clicked(string);
+    callback providers-clicked();
+    callback mailbox-clicked();
 
     VerticalBox {
         // ---- header ----
@@ -59,7 +72,44 @@ export component AppWindow inherits Window {
             Text { text: root.status; color: #d97706; wrap: word-wrap; }
         }
 
-        if root.connected && root.chat-title == "" : VerticalBox {
+        // ---- config tab ----
+        if root.connected && root.tab == "config" : VerticalBox {
+            HorizontalBox {
+                height: 40px;
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 6px;
+                Text { text: "Settings"; color: #e6edf3; vertical-alignment: center; horizontal-stretch: 1; }
+                Button { text: "Back"; clicked => { root.back-clicked(); } }
+            }
+            if root.page == "providers_list" : ListView {
+                vertical-stretch: 1;
+                for p in root.providers : Rectangle {
+                    height: 40px;
+                    Text { x: 12px; vertical-alignment: center; text: p; color: #e6edf3; }
+                }
+            }
+            if root.page != "providers_list" : ListView {
+                vertical-stretch: 1;
+                for c in root.config-items : Rectangle {
+                    height: 44px;
+                    background: #161b22;
+                    Text { x: 12px; vertical-alignment: center; text: c; color: #e6edf3; }
+                    TouchArea { clicked => { root.config-item-clicked(c); } }
+                }
+            }
+        }
+
+        // ---- mailbox overlay ----
+        if root.connected && root.page == "chat_overlay" : ListView {
+            vertical-stretch: 1;
+            for m in root.mailbox : Rectangle {
+                height: 40px;
+                Text { x: 12px; vertical-alignment: center; text: m; color: #e6edf3; }
+            }
+        }
+
+        if root.connected && root.tab == "chat" && root.chat-title == "" : VerticalBox {
             HorizontalBox {
                 height: 40px;
                 padding-left: 12px;
@@ -91,7 +141,13 @@ export component AppWindow inherits Window {
             Text { text: root.status; color: #8b98a9; wrap: word-wrap; }
         }
 
-        if root.connected && root.chat-title != "" : VerticalBox {
+        if root.connected : HorizontalBox {
+            height: 44px;
+            Button { text: "Chat"; horizontal-stretch: 1; clicked => { root.tab-clicked("chat"); } }
+            Button { text: "Settings"; horizontal-stretch: 1; clicked => { root.tab-clicked("config"); } }
+        }
+
+        if root.connected && root.tab == "chat" && root.chat-title != "" : VerticalBox {
             ScrollView {
                 vertical-stretch: 1;
                 VerticalBox {
