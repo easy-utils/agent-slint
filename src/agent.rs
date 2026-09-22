@@ -65,7 +65,61 @@ pub async fn list_sessions(base: &str, token: &str) -> Result<Vec<String>, Strin
         return Err(format!("list_sessions: HTTP {}", r.status));
     }
     let out = pb::ListSessionsResponse::decode(&r.body[..]).map_err(|e| e.to_string())?;
-    Ok(out.sessions.iter().map(|s| s.name.clone()).collect())
+    // Ordered most-recent-first (lastMessageAt -> updatedAt -> createdAt).
+    let mut sessions: Vec<_> = out.sessions.iter().collect();
+    sessions.sort_by_key(|s| std::cmp::Reverse(session_recency(s)));
+    Ok(sessions.into_iter().map(|s| s.name.clone()).collect())
+}
+
+/// A session's epoch-ms recency: lastMessageAt -> updatedAt -> createdAt.
+fn session_recency(s: &pb::Session) -> i64 {
+    for v in [&s.last_message_at, &s.updated_at, &s.created_at] {
+        if v.is_empty() {
+            continue;
+        }
+        if let Ok(d) = v.parse::<chrono_lite::DateTime>() {
+            return d.millis;
+        }
+    }
+    0
+}
+
+/// Minimal RFC3339 -> epoch-ms parser (no chrono dependency). Handles the
+/// `YYYY-MM-DDTHH:MM:SS(.fff)?Z` shape the agent emits.
+mod chrono_lite {
+    pub struct DateTime {
+        pub millis: i64,
+    }
+    impl std::str::FromStr for DateTime {
+        type Err = ();
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            // 2026-09-22T10:00:00.000Z
+            let bytes = s.as_bytes();
+            if bytes.len() < 19 {
+                return Err(());
+            }
+            let num = |a: usize, b: usize| -> Result<i64, ()> {
+                s.get(a..b).ok_or(())?.parse::<i64>().map_err(|_| ())
+            };
+            let (y, mo, d) = (num(0, 4)?, num(5, 7)?, num(8, 10)?);
+            let (hh, mm, ss) = (num(11, 13)?, num(14, 16)?, num(17, 19)?);
+            let mut ms = 0i64;
+            if bytes.get(19) == Some(&b'.') {
+                ms = num(20, 23)?;
+            }
+            // days since epoch (civil algorithm)
+            let y2 = if mo <= 2 { y - 1 } else { y };
+            let era = if y2 >= 0 { y2 } else { y2 - 399 } / 400;
+            let yoe = y2 - era * 400;
+            let mp = (mo + 9) % 12;
+            let doy = (153 * mp + 2) / 5 + d - 1;
+            let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+            let days = era * 146097 + doe - 719468;
+            Ok(DateTime {
+                millis: ((days * 86400) + hh * 3600 + mm * 60 + ss) * 1000 + ms,
+            })
+        }
+    }
 }
 
 pub async fn create_session(base: &str, token: &str, name: &str) -> Result<String, String> {
