@@ -45,6 +45,7 @@ export component AppWindow inherits Window {
     callback config-item-clicked(string);
     callback providers-clicked();
     callback mailbox-clicked();
+    callback fork-clicked(int);
 
     VerticalBox {
         // ---- header ----
@@ -117,6 +118,7 @@ export component AppWindow inherits Window {
                 spacing: 6px;
                 Text { text: "Sessions (" + root.sessions.length + ")"; color: #e6edf3; vertical-alignment: center; horizontal-stretch: 1; }
                 Button { text: "New"; clicked => { root.new-session(); } }
+                Button { text: "Fork"; clicked => { root.fork-clicked(root.selected-session); } }
                 Button { text: "Refresh"; clicked => { root.refresh-clicked(); } }
             }
             ListView {

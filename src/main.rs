@@ -329,14 +329,52 @@ fn main() -> Result<(), slint::PlatformError> {
             );
             let ui_weak = ui.as_weak();
             rt.spawn(async move {
-                if let Ok(rows) = agent::mailbox(&base, &token, &sid).await {
+                if let Ok(page) = agent::mailbox(&base, &token, &sid, "", 30).await {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_weak.upgrade() {
                             ui.set_mailbox(ModelRc::new(VecModel::from(
-                                rows.into_iter().map(SharedString::from).collect::<Vec<_>>(),
+                                page.entries
+                                    .into_iter()
+                                    .map(SharedString::from)
+                                    .collect::<Vec<_>>(),
                             )));
                         }
                     });
+                }
+            });
+        });
+    }
+
+    // ---- fork selected session (without opening) ----
+    {
+        let ui_weak = ui.as_weak();
+        let rt = rt.clone();
+        ui.on_fork_clicked(move |idx| {
+            let ui = match ui_weak.upgrade() {
+                Some(u) => u,
+                None => return,
+            };
+            let id = match ui.get_sessions().row_data(idx as usize) {
+                Some(s) => s.to_string(),
+                None => return,
+            };
+            let (base, token) = (ui.get_base_url().to_string(), ui.get_token().to_string());
+            let ui_weak = ui.as_weak();
+            rt.spawn(async move {
+                let branch = format!("fork-{id}");
+                if agent::fork(&base, &token, &id, &branch).await.is_ok() {
+                    if let Ok(sessions) = agent::list_sessions(&base, &token).await {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_weak.upgrade() {
+                                ui.set_sessions(ModelRc::new(VecModel::from(
+                                    sessions
+                                        .into_iter()
+                                        .map(SharedString::from)
+                                        .collect::<Vec<_>>(),
+                                )));
+                            }
+                        });
+                    }
                 }
             });
         });

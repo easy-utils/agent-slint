@@ -113,10 +113,14 @@ pub async fn list_messages(
     let out = pb::ListMessagesResponse::decode(&r.body[..]).map_err(|e| e.to_string())?;
     let mut lines = Vec::new();
     for m in &out.messages {
-        let who = match m.role.as_str() {
-            "user" => "You",
-            "assistant" => "Agent",
-            other => other,
+        let who = match m.source.as_str() {
+            s if s.starts_with("session:") => format!("[{}]", &s["session:".len()..]),
+            s if s.starts_with("system:") => format!("[system:{}]", &s["system:".len()..]),
+            _ => match m.role.as_str() {
+                "user" => "You".to_string(),
+                "assistant" => "Agent".to_string(),
+                other => other.to_string(),
+            },
         };
         for p in &m.parts {
             match p.r#type.as_str() {
@@ -305,9 +309,26 @@ pub async fn set_config(base: &str, token: &str, key: &str, value: &str) -> Resu
     Ok(())
 }
 
-pub async fn mailbox(base: &str, token: &str, id: &str) -> Result<Vec<String>, String> {
+/// One page of the mailbox (NEWEST-FIRST, paged backward).
+pub struct MailboxPage {
+    pub entries: Vec<String>,
+    pub has_more: bool,
+}
+
+pub async fn mailbox(
+    base: &str,
+    token: &str,
+    id: &str,
+    before: &str,
+    limit: i32,
+) -> Result<MailboxPage, String> {
     let (_b, t, h) = transport(base, token);
-    let body = pb::MailboxRequest { id: id.to_string() }.encode_to_vec();
+    let body = pb::MailboxRequest {
+        id: id.to_string(),
+        before: before.to_string(),
+        limit,
+    }
+    .encode_to_vec();
     let r = t
         .send(req(base, &h, "/agent.v1.AgentService/Mailbox", body))
         .await
@@ -316,9 +337,62 @@ pub async fn mailbox(base: &str, token: &str, id: &str) -> Result<Vec<String>, S
         return Err(format!("mailbox: HTTP {}", r.status));
     }
     let out = pb::MailboxResponse::decode(&r.body[..]).map_err(|e| e.to_string())?;
-    Ok(out
-        .mailbox
-        .iter()
-        .map(|m| format!("{} · {}", m.msg_type, m.status))
-        .collect())
+    Ok(MailboxPage {
+        has_more: out.has_more,
+        entries: out
+            .mailbox
+            .iter()
+            .map(|m| format!("{} · {}", mailbox_label(&m.msg_type, &m.source), m.status))
+            .collect(),
+    })
+}
+
+/// (msgType, source) → a human label (mirrors the other clients).
+pub fn mailbox_label(msg_type: &str, source: &str) -> String {
+    if msg_type == "interrupt" {
+        return "Interrupt".to_string();
+    }
+    if msg_type != "trigger" {
+        return "Event".to_string();
+    }
+    if source == "user" {
+        return "Message".to_string();
+    }
+    if let Some(name) = source.strip_prefix("session:") {
+        return format!("From session · {name}");
+    }
+    if let Some(name) = source.strip_prefix("system:") {
+        return format!("From system · {name}");
+    }
+    "Message".to_string()
+}
+
+/// Render a message origin label (session hand-off / system notice).
+pub fn source_label(role: &str, source: &str) -> String {
+    if let Some(name) = source.strip_prefix("session:") {
+        return format!("[{name}]");
+    }
+    if let Some(name) = source.strip_prefix("system:") {
+        return format!("[system:{name}]");
+    }
+    role.to_uppercase()
+}
+
+/// Fork a session WITHOUT opening it.
+pub async fn fork(base: &str, token: &str, id: &str, branch: &str) -> Result<(), String> {
+    let (_b, t, h) = transport(base, token);
+    let body = pb::ForkRequest {
+        id: id.to_string(),
+        name: branch.to_string(),
+        ..Default::default()
+    }
+    .encode_to_vec();
+    let r = t
+        .send(req(base, &h, "/agent.v1.AgentService/Fork", body))
+        .await
+        .map_err(map_err)?;
+    if r.status >= 300 {
+        return Err(format!("fork: HTTP {}", r.status));
+    }
+    Ok(())
 }
