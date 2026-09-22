@@ -190,6 +190,8 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
             ui.set_composer("".into());
+            // An error is TRANSIENT: a new prompt clears any prior error line.
+            clear_errors(&ui);
             push_line(&ui, format!("You: {text}"));
             push_line(&ui, "Agent: ".to_string());
 
@@ -211,6 +213,7 @@ fn main() -> Result<(), slint::PlatformError> {
                                 .cloned()
                                 .unwrap_or_else(|| "tool".into())
                         ),
+                        "error" => format!("\n[Model error: {}]\n", error_text(params)),
                         _ => return,
                     };
                     if line.is_empty() {
@@ -221,7 +224,8 @@ fn main() -> Result<(), slint::PlatformError> {
                 .await;
                 if let Err(e) = result {
                     if let Some(ui) = ui_weak.upgrade() {
-                        push_line(&ui, format!("[error: {e}]"));
+                        // The title says what failed; the body is the raw error.
+                        push_line(&ui, format!("[Send failed: {e}]"));
                     }
                 }
             });
@@ -381,6 +385,22 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     ui.run()
+}
+
+/// Extract the message body of a streamed `error` event.
+fn error_text(params: &std::collections::HashMap<String, String>) -> String {
+    params.get("error").cloned().or_else(|| params.get("message").cloned())
+        .unwrap_or_else(|| "Unknown error".to_string())
+}
+
+/// Drop any error lines (a new send makes an error transient).
+fn clear_errors(ui: &AppWindow) {
+    let kept: Vec<SharedString> = ui
+        .get_transcript()
+        .iter()
+        .filter(|l| !l.contains("failed:") && !l.contains("error:"))
+        .collect();
+    ui.set_transcript(ModelRc::new(VecModel::from(kept)));
 }
 
 /// Append a complete line to the transcript on the UI thread.
